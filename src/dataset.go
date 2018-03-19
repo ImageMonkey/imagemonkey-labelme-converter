@@ -13,11 +13,41 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	_"image/jpeg"
+	_"image/png"
+	"image"
+	"github.com/nfnt/resize"
 )
+
+type Box struct {
+	XMLName xml.Name `xml:"box"`
+	Xmin float32 `xml:"xmin"`
+	Ymin float32 `xml:"ymin"`
+	Xmax float32 `xml:"xmax"`
+	Ymax float32 `xml:"ymax"`
+}
+
+type Segment struct {
+	XMLName xml.Name `xml:"segm"`
+	Box Box `xml:"box,omitempty"`
+}
+
+type Point struct {
+	XMLName xml.Name `xml:"pt"`
+	X int32 `xml:"x"`
+	Y int32 `xml:"y"`
+}
+
+type Polygon struct {
+	XMLName xml.Name `xml:"polygon"`
+	Points []Point `xml:"pt"`
+}
 
 type Object struct {
 	XMLName xml.Name `xml:"object"`
 	Name string `xml:"name"`
+	Polygon Polygon `xml:"polygon,omitempty"`
+	Segment Segment `xml:"segm,omitempty"`
 }
 
 type Annotation struct {
@@ -35,6 +65,42 @@ type Label struct {
 type ImageInfo struct {
 	Folder string `json:"folder"`
 	Filename string `json:"filename"`
+	UniqueName string `json:"uniquename"`
+}
+
+type Image struct {
+	OriginalImage image.Image `json:"original_image"`
+	ScaledImage image.Image `json:"scaled_image"`
+	OriginalWidth int32 `json:"original_width"`
+	OriginalHeight int32 `json:"original_height"`
+	ScaledWidth int32 `json:"scaled_width"`
+	ScaledHeight int32 `json:"scaled_height"`
+	ScaleFactor float32 `json:"scalefactor"`
+	Url string `json:"url"`
+}
+
+func calcScaleFactor(img Image) float32 {
+	var maxSize int32
+	var scaleFactor float32
+
+	maxSize = 1000
+	scaleFactor = 1.0
+
+	if img.OriginalWidth > img.OriginalHeight {
+		if img.OriginalWidth > maxSize {
+			scaleFactor = float32(maxSize)/float32(img.OriginalWidth)
+		} else {
+			scaleFactor = 1.0
+		}
+	} else {
+		if img.OriginalHeight > maxSize {
+			scaleFactor = float32(maxSize)/float32(img.OriginalHeight)
+		} else {
+			scaleFactor = 1.0
+		}
+	}
+
+	return scaleFactor
 }
 
 func getXmlFilesFromDir(dir string) ([]string, error) {
@@ -128,7 +194,9 @@ func persistImageInfos(path string, imageInfos []ImageInfo) error {
 	return nil
 }
 
-
+func convertToLocalFilename(folder string, filename string) string {
+	return folder + "_" + filename
+}
 
 type Dataset interface {
     Load() error
@@ -143,26 +211,25 @@ type LabelMeDataset struct {
 	useCache bool
 }
 
-func NewLabelMeDataset(useCache bool) *LabelMeDataset {
+func NewLabelMeDataset(baseDirectory string, useCache bool) *LabelMeDataset {
     return &LabelMeDataset{
     	labels: make(map[string]int32),
     	baseUrl: "http://people.csail.mit.edu/brussell/research/LabelMe/",
     	useCache: useCache,
+    	baseDirectory: baseDirectory,
     } 
 }
 
-func (p *LabelMeDataset) Load(outputFolder string) error {
-	p.baseDirectory = outputFolder
-
-	if _, err := os.Stat(outputFolder); os.IsNotExist(err) {
+func (p *LabelMeDataset) Load() error {
+	if _, err := os.Stat(p.baseDirectory); os.IsNotExist(err) {
 		fmt.Printf("dataset doesn't exist...downloading\n")
-		err = os.Mkdir(outputFolder, os.ModeDir)
+		err = os.Mkdir(p.baseDirectory, os.ModeDir)
 		if err != nil {
-			fmt.Printf("Couldn't create folder: ", outputFolder)
-			return errors.New(("Couldn't create folder " + outputFolder))
+			fmt.Printf("Couldn't create folder: ", p.baseDirectory)
+			return errors.New(("Couldn't create folder " + p.baseDirectory))
 		}
 		//download labelme dataset
-		cmd := exec.Command("wget", "-m", "-np", (p.baseUrl + "Annotations/"), "--directory-prefix=" + outputFolder)
+		cmd := exec.Command("wget", "-m", "-np", (p.baseUrl + "Annotations/"), "--directory-prefix=" + p.baseDirectory)
 		stderr, _ := cmd.StderrPipe()
 	    cmd.Start()
 
@@ -183,8 +250,12 @@ func (p *LabelMeDataset) Load(outputFolder string) error {
     return nil
 }
 
+func (p *LabelMeDataset) GetCacheDirectory() string {
+	return p.baseDirectory + "/cache/"
+}
+
 func (p *LabelMeDataset) BuildLabelMap() error {
-	cachedLabelsMapDir := p.baseDirectory + "/cache/"
+	cachedLabelsMapDir := p.GetCacheDirectory()
 	cachedLabelsMapPath := cachedLabelsMapDir + "labels.map"
 
 	//if cache is enabled
@@ -214,7 +285,7 @@ func (p *LabelMeDataset) BuildLabelMap() error {
 
 	//parse annotation from xml file
 	for _, file := range files {
-        annotation, err := p.ParseAnnotationFromXml(file)
+        annotation, err := p.ParseAnnotationFromXml(file, "")
         if err != nil {
         	//looks like there are some broken XML files in the label me dataset...skip those 
         	fmt.Println("Couldn't parse xml file")
@@ -243,7 +314,7 @@ func (p *LabelMeDataset) GetLabelMap() map[string]int32 {
 }
 
 func (p *LabelMeDataset) GetImageInfos(label string) ([]ImageInfo, error) {
-	cachedImageInfosDir := p.baseDirectory + "/cache/"
+	cachedImageInfosDir := p.GetCacheDirectory()
 	cachedImageInfos := cachedImageInfosDir + label + ".tmp"
 
 	var imageInfos []ImageInfo
@@ -270,10 +341,10 @@ func (p *LabelMeDataset) GetImageInfos(label string) ([]ImageInfo, error) {
 
 	files, err := getXmlFilesFromDir(p.baseDirectory)
 	for _, file := range files {
-		annotation, err := p.ParseAnnotationFromXml(file)
+		annotation, err := p.ParseAnnotationFromXml(file, "")
 		if err != nil {
 			//looks like there are some broken XML files in the label me dataset...skip those 
-        	fmt.Println("Couldn't parse xml file")
+        	fmt.Println("Couldn't parse xml file %s", err.Error())
         	continue
 		}
 
@@ -290,6 +361,7 @@ func (p *LabelMeDataset) GetImageInfos(label string) ([]ImageInfo, error) {
 			var imageInfo ImageInfo
 			imageInfo.Filename = annotation.Filename
 			imageInfo.Folder = annotation.Folder
+			imageInfo.UniqueName = convertToLocalFilename(imageInfo.Folder, imageInfo.Filename)
 
 			fullname := annotation.Folder + "/" + annotation.Filename
 			_, exists := filenameExistsMap[fullname]
@@ -332,7 +404,7 @@ func (p *LabelMeDataset) DownloadImage(name string, filename string) (error) {
 }
 
 func (p *LabelMeDataset) DownloadImages(imageInfos []ImageInfo, label string) (error) {
-	dir := p.baseDirectory + "/cache/" + label
+	dir := p.GetCacheDirectory() + label
 	if p.useCache {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			err := os.Mkdir(dir, os.ModeDir)
@@ -346,7 +418,7 @@ func (p *LabelMeDataset) DownloadImages(imageInfos []ImageInfo, label string) (e
 	}
 
 	for _, imageInfo := range imageInfos {
-		err := p.DownloadImage((imageInfo.Folder + "/" + imageInfo.Filename), (dir + "/" + imageInfo.Folder + "_" + imageInfo.Filename))
+		err := p.DownloadImage((imageInfo.Folder + "/" + imageInfo.Filename), (dir + "/" + convertToLocalFilename(imageInfo.Folder, imageInfo.Filename)))
 		if err != nil {
 			return err
 		}
@@ -355,8 +427,50 @@ func (p *LabelMeDataset) DownloadImages(imageInfos []ImageInfo, label string) (e
 	return nil
 }
 
+func (p *LabelMeDataset) GetImage(label string, imageInfo ImageInfo, scaled bool) (Image, error) {
+	var im Image
+	if p.useCache {
+		cacheDir := p.GetCacheDirectory()
+		f, err := os.Open(cacheDir + label + "/" + imageInfo.UniqueName)
+	    if err != nil {
+	        return im, err
+	    }
+	    defer f.Close()
 
-func (p *LabelMeDataset) ParseAnnotationFromXml(filename string) (Annotation, error) {
+
+	    im.OriginalImage, _, err = image.Decode(f)
+	    if err != nil {
+	        return im, err
+	    }
+
+	    bounds := im.OriginalImage.Bounds()
+	    im.OriginalWidth = int32(bounds.Dx())
+    	im.OriginalHeight = int32(bounds.Dy())
+
+    	if(scaled){
+    		im.ScaleFactor = calcScaleFactor(im)
+    		im.ScaledWidth = int32(float32(im.OriginalWidth) * im.ScaleFactor)
+    		im.ScaledHeight = int32(float32(im.OriginalHeight) * im.ScaleFactor)
+
+    		im.ScaledImage = resize.Resize(uint(im.ScaledWidth), uint(im.ScaledHeight), im.OriginalImage, resize.Lanczos3)
+
+    	} else {
+    		im.ScaleFactor = 1.0
+    		im.ScaledWidth = im.OriginalWidth
+    		im.ScaledHeight = im.OriginalHeight
+    		im.ScaledImage = im.OriginalImage
+    	}
+
+    	im.Url = p.baseUrl + "Images/" + imageInfo.Folder + "/" + imageInfo.Filename
+
+		return im, nil
+	}
+
+	return im, errors.New("LabelMeConverter: Currently only the cached version of this call is implemented")
+}
+
+
+func (p *LabelMeDataset) ParseAnnotationFromXml(filename string, label string) (Annotation, error) {
 	var annotation Annotation
 	f, err := os.Open(filename)
 	if err != nil {
@@ -369,6 +483,19 @@ func (p *LabelMeDataset) ParseAnnotationFromXml(filename string) (Annotation, er
 	err = xml.Unmarshal(byteValue, &annotation)
 	if err != nil {
 		return annotation, err
+	}
+
+	if label != "" { //only keep objects where label matches
+		var objects []Object
+		objects = make([]Object, 0) //empty slice 
+		for _, object := range annotation.Objects {
+			if label == object.Name {
+				continue
+			}
+
+			objects = append(objects, object)
+		}
+		annotation.Objects = objects
 	}
 
 	return annotation, nil

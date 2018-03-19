@@ -7,8 +7,8 @@ import (
 func main() {
 	outputFolder := "../dataset"
 
-	labelMeDataset := NewLabelMeDataset(true)
-	labelMeDataset.Load(outputFolder)
+	labelMeDataset := NewLabelMeDataset(outputFolder, true)
+	labelMeDataset.Load()
 	labelMeDataset.BuildLabelMap()
 	_ = labelMeDataset.GetLabelMap()
 
