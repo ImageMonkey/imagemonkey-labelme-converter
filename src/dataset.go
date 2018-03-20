@@ -359,11 +359,13 @@ func (p *LabelMeDataset) GetImageInfos(label string) ([]ImageInfo, error) {
 
 		if found {
 			var imageInfo ImageInfo
-			imageInfo.Filename = annotation.Filename
-			imageInfo.Folder = annotation.Folder
+			//trim any newline characters in the folder/file name (for some reason, there are some
+			//files in the labelme dataset that have newline chars?)
+			imageInfo.Filename = strings.Trim(annotation.Filename, "\r\n")
+			imageInfo.Folder = strings.Trim(annotation.Folder, "\r\n")
 			imageInfo.UniqueName = convertToLocalFilename(imageInfo.Folder, imageInfo.Filename)
 
-			fullname := annotation.Folder + "/" + annotation.Filename
+			fullname := imageInfo.Folder + "/" + imageInfo.Filename
 			_, exists := filenameExistsMap[fullname]
 			if !exists {
 				imageInfos = append(imageInfos, imageInfo)
@@ -413,15 +415,22 @@ func (p *LabelMeDataset) DownloadImages(imageInfos []ImageInfo, label string) (e
 			}
 		} else {
 			fmt.Println("images folder already exists...using this one")
-			return nil
+			//return nil
 		}
 	}
 
-	for _, imageInfo := range imageInfos {
-		err := p.DownloadImage((imageInfo.Folder + "/" + imageInfo.Filename), (dir + "/" + convertToLocalFilename(imageInfo.Folder, imageInfo.Filename)))
+	for i, imageInfo := range imageInfos {
+		path := dir + "/" + convertToLocalFilename(imageInfo.Folder, imageInfo.Filename)
+		if _, err := os.Stat(path); err == nil { //skip files that already exists
+			fmt.Printf("[%d/%d] Image exists, skipping: %s\n", i+1, len(imageInfos), convertToLocalFilename(imageInfo.Folder, imageInfo.Filename))
+			continue
+		}
+
+		err := p.DownloadImage((imageInfo.Folder + "/" + imageInfo.Filename), path)
 		if err != nil {
 			return err
 		}
+		fmt.Printf("[%d/%d] Downloaded Image %s\n", i+1, len(imageInfos), convertToLocalFilename(imageInfo.Folder, imageInfo.Filename))
 	}
 
 	return nil

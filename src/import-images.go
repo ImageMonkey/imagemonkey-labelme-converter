@@ -7,7 +7,7 @@ import (
 //change me accordingly
 
 const LABEL = "car"
-const ACTION = "push"
+const ACTION = "download"
 const PRODUCTION = false
 
 
