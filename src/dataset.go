@@ -419,11 +419,26 @@ func (p *LabelMeDataset) DownloadImages(imageInfos []ImageInfo, label string) (e
 		}
 	}
 
+	lastDownloadedImage := ""
 	for i, imageInfo := range imageInfos {
 		path := dir + "/" + convertToLocalFilename(imageInfo.Folder, imageInfo.Filename)
 		if _, err := os.Stat(path); err == nil { //skip files that already exists
 			fmt.Printf("[%d/%d] Image exists, skipping: %s\n", i+1, len(imageInfos), convertToLocalFilename(imageInfo.Folder, imageInfo.Filename))
+			lastDownloadedImage = imageInfo.Folder + "/" + imageInfo.Filename
 			continue
+		}
+
+		if lastDownloadedImage != "" {
+			//remove the image we have download last, as it might be that the image is broken due to the fact, that we interrupted the download process
+			//by pressing Ctrl+C. By re-downloading the image we are assuring, that this won't happen. 
+			os.Remove(lastDownloadedImage)
+
+			err := p.DownloadImage((imageInfo.Folder + "/" + imageInfo.Filename), path)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("[%d/%d] Re-Downloaded Image %s\n", i+1, len(imageInfos), convertToLocalFilename(imageInfo.Folder, imageInfo.Filename))
+			lastDownloadedImage = ""
 		}
 
 		err := p.DownloadImage((imageInfo.Folder + "/" + imageInfo.Filename), path)
