@@ -11,6 +11,13 @@ import (
     "errors"
 )
 
+func bool2string(in bool) string {
+    if in {
+        return "true"
+    }
+    return "false"
+}
+
 type PolyPoint struct {
     X int32 `json:"x"`
     Y int32 `json:"y"`
@@ -70,7 +77,7 @@ func (p *ImageMonkeyAPI) AddAnnotations(imageId string, annotation ImageMonkeyAn
 
 
 
-func _donate(img Image, provider string, baseUrl string) error {
+func _donate(img Image, provider string, baseUrl string, label string, autoUnlock bool) error {
     var b bytes.Buffer
     w := multipart.NewWriter(&b)
 
@@ -102,7 +109,19 @@ func _donate(img Image, provider string, baseUrl string) error {
     if err != nil {
         return err
     }
-    _, err = fw.Write([]byte("car"))
+    _, err = fw.Write([]byte(label))
+    if err != nil {
+        return err
+    }
+
+
+    autoUnlockStr := bool2string(autoUnlock)
+
+    fw, err = w.CreateFormField("auto_unlock")
+    if err != nil {
+        return err
+    }
+    _, err = fw.Write([]byte(autoUnlockStr))
     if err != nil {
         return err
     }
@@ -161,12 +180,12 @@ func _donate(img Image, provider string, baseUrl string) error {
     return nil
 }
 
-func (p *ImageMonkeyAPI) Donate(img Image) error {
-    return _donate(img, "donation", p.baseUrl)
+func (p *ImageMonkeyAPI) Donate(img Image, label string) error {
+    return _donate(img, "donation", p.baseUrl, label, false)
 }
 
-func (p *ImageMonkeyAPI) AddLabelMeDonation (img Image) error {
-    return _donate(img, "labelme", p.baseUrl)
+func (p *ImageMonkeyAPI) AddLabelMeDonation (img Image, label string, autoUnlock bool) error {
+    return _donate(img, "labelme", p.baseUrl, label, autoUnlock)
 }
 
 func (p *ImageMonkeyAPI) ConvertFrom(label string, annotation Annotation, scaleFactor float32) ImageMonkeyAnnotation {

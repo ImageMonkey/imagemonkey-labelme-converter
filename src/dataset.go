@@ -79,6 +79,10 @@ type Image struct {
 	Url string `json:"url"`
 }
 
+type ImageException struct {
+	UniqueName string `json:"uniquename"`
+}
+
 func calcScaleFactor(img Image) float32 {
 	var maxSize int32
 	var scaleFactor float32
@@ -198,6 +202,23 @@ func convertToLocalFilename(folder string, filename string) string {
 	return folder + "_" + filename
 }
 
+func readImageExceptions(path string) ([]ImageException, error) {
+	var exceptions []ImageException
+
+	bytes, err := ioutil.ReadFile(path)
+    if err != nil {
+        return exceptions, err
+    }
+
+    
+    err = json.Unmarshal(bytes, &exceptions)
+    if err != nil {
+    	return exceptions, err
+    }
+
+    return exceptions, nil
+} 
+
 type Dataset interface {
     Load() error
     BuildLabelMap(outputFolder string) error
@@ -209,6 +230,7 @@ type LabelMeDataset struct {
 	labels map[string]int32
 	baseUrl string
 	useCache bool
+	imageExceptions []ImageException
 }
 
 func NewLabelMeDataset(baseDirectory string, useCache bool) *LabelMeDataset {
@@ -245,6 +267,15 @@ func (p *LabelMeDataset) Load() error {
 
 	} else {
 		fmt.Println("dataset already exists...using this one")
+	}
+
+	imageExceptionsPath := p.GetCacheDirectory() + "exceptions.tmp"
+	if _, err := os.Stat(imageExceptionsPath); err == nil { //if image exceptions exist
+		fmt.Println("exceptions file exists...using this one")
+		p.imageExceptions, err = readImageExceptions(imageExceptionsPath)
+		if err != nil {
+			return err
+		}
 	}
 
     return nil
